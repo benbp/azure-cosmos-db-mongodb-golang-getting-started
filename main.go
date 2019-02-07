@@ -33,6 +33,13 @@ type Package struct {
 	LastUpdatedBy string
 }
 
+type RequestStats struct {
+	Ok                            int
+	CommandName                   string
+	RequestCharge                 float64
+	RequestDurationInMilliSeconds float64
+}
+
 func main() {
 	// DialInfo holds options for establishing a session with Azure Cosmos DB for MongoDB API account.
 	dialInfo := &mgo.DialInfo{
@@ -65,6 +72,10 @@ func main() {
 	// get collection
 	collection := session.DB(database).C("package")
 
+	testConcurrent(collection, session)
+
+	return
+
 	// insert Document in collection
 	err = collection.Insert(&Package{
 		FullName:      "react",
@@ -73,6 +84,8 @@ func main() {
 		StarsCount:    48794,
 		LastUpdatedBy: "shergin",
 	})
+
+	getStats("insert stats", collection)
 
 	if err != nil {
 		log.Fatal("Problem inserting data: ", err)
@@ -87,6 +100,8 @@ func main() {
 		return
 	}
 
+	getStats("find stats", collection)
+
 	fmt.Println("Description:", result.Description)
 
 	// update document
@@ -98,10 +113,80 @@ func main() {
 		return
 	}
 
+	getStats("update stats", collection)
+
 	// delete document
 	err = collection.Remove(updateQuery)
 	if err != nil {
 		log.Fatal("Error deleting record: ", err)
+		return
+	}
+
+	getStats("remove stats", collection)
+}
+
+func testConcurrent(collection *mgo.Collection, session *mgo.Session) {
+	session2 := session.Copy()
+	collection2 := session2.DB(database).C("package")
+
+	// insert Document in collection
+	err := collection.Insert(&Package{
+		FullName:      "react",
+		Description:   "A framework for building native apps with React.",
+		ForksCount:    11392,
+		StarsCount:    48794,
+		LastUpdatedBy: "shergin",
+	})
+
+	if err != nil {
+		log.Fatal("Error testing: ", err)
+		return
+	}
+
+	result := Package{}
+	err = collection2.Find(bson.M{"fullname": "react"}).One(&result)
+	if err != nil {
+		log.Fatal("Error finding record: ", err)
+		return
+	}
+
+	if err != nil {
+		log.Fatal("Error testing: ", err)
+		return
+	}
+
+	getStats("collection 1, insert", collection)
+	getStats("collection 2, find", collection2)
+}
+
+func printCharge(m bson.M) {
+	fmt.Printf("Charge: %f", m["RequestCharge"])
+	fmt.Println("")
+}
+
+func printM(m bson.M) {
+	for key, value := range m {
+		fmt.Println(key, value)
+	}
+}
+
+func getStats(msg string, collection *mgo.Collection) {
+
+	var stats bson.M
+
+	start := time.Now()
+	err := collection.Database.Run(bson.D{{Name: "getLastRequestStatistics", Value: 1}}, &stats)
+	elapsed := time.Since(start)
+
+	fmt.Println(msg)
+	fmt.Printf("Duration: %s", elapsed)
+	fmt.Println("")
+	printCharge(stats)
+	//printM(stats)
+	fmt.Println("-------------------------")
+
+	if err != nil {
+		log.Fatal("Error getting diagnostics: ", err)
 		return
 	}
 }
